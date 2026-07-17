@@ -1,0 +1,7 @@
+# Ignore sensitive and temporary files
+.env
+backend/db.sqlite3
+backend/django.log
+backend/__pycache__/
+frontend/node_modules/
+env/

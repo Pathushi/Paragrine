@@ -1,0 +1,133 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* ============================================================
+     1. GLOBAL BRAND COLORS
+     ============================================================ */
+  --brand-primary: #6b7982;
+  --brand-primary-hover: #5d6a73;
+  --brand-accent: #76d0e7;
+
+  --brand-success: #10b981;
+  --brand-success-light: #ecfdf5;
+  --brand-danger: #ef4444;
+
+  /* ============================================================
+     2. DASHBOARD THEME COLORS (Change these anytime!)
+     ============================================================ */
+  --theme-bg-workspace: #f8fafc;      /* Background behind everything */
+  --theme-bg-sidebar: #ffffff;        /* Sidebar panel background */
+  --theme-bg-card: #ffffff;           /* Chart and metric card background */
+  
+  --theme-text-main: #1e293b;         /* Primary headers and emphasis text */
+  --theme-text-muted: #64748b;        /* Subtitles and secondary text */
+  --theme-text-faint: #94a3b8;        /* Very light text (e.g. OVERVIEW label) */
+  
+  --theme-sidebar-hover-bg: #f8fafc;  /* Background color when hovering over menu items */
+  --theme-sidebar-text-idle: #64748b; /* Menu text when not selected */
+  --theme-sidebar-text-active: #1e293b;/* Menu text when selected */
+
+  --font-main: "Inter", system-ui, sans-serif;
+}
+
+/* Base resets */
+body {
+  margin: 0;
+  background-color: var(--theme-bg-workspace);
+  font-family: var(--font-main);
+}
+
+/* Apply variables to Tailwind utility abstractions */
+.bg-brand-primary { background-color: var(--brand-primary); }
+.bg-brand-primary:hover { background-color: var(--brand-primary-hover); }
+.text-brand-primary { color: var(--brand-primary); }
+.border-brand-accent { border-color: var(--brand-accent); }
+
+/* ============================================================
+   3. CUSTOM THEME CLASSES (Used inside React)
+   ============================================================ */
+.theme-workspace { background-color: var(--theme-bg-workspace); }
+.theme-sidebar { background-color: var(--theme-bg-sidebar); }
+.theme-card { background-color: var(--theme-bg-card); }
+.theme-text-main { color: var(--theme-text-main); }
+.theme-text-muted { color: var(--theme-text-muted); }
+.theme-text-faint { color: var(--theme-text-faint); }
+
+/* Sidebar Navigation Links */
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.875rem 1rem;
+  border-radius: 1rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  transition: all 0.2s;
+}
+.sidebar-link-active {
+  color: var(--theme-sidebar-text-active);
+  background-color: var(--theme-sidebar-hover-bg);
+  font-weight: 700;
+}
+.sidebar-link-inactive {
+  color: var(--theme-sidebar-text-idle);
+  font-weight: 500;
+}
+.sidebar-link-inactive:hover {
+  color: var(--theme-sidebar-text-active);
+  background-color: var(--theme-sidebar-hover-bg);
+}
+
+/* --- Micro-Animations --- */
+.fade-in {
+  animation: fadeIn 0.5s ease-out;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.animate-shake {
+  animation: shake 0.5s both;
+}
+@keyframes shake {
+  10%, 90% { transform: translate3d(-1px, 0, 0); }
+  30%, 70% { transform: translate3d(-4px, 0, 0); }
+  50% { transform: translate3d(4px, 0, 0); }
+}
+
+/* --- Customized App Viewport Scrollbar --- */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--theme-text-faint);
+  border-radius: 10px;
+}
+
+/* --- Interactive React Calendar Library Theme Injectors --- */
+.react-calendar {
+  border: none !important;
+  width: 100% !important;
+  background: transparent !important;
+}
+.react-calendar__tile--active {
+  background: var(--brand-primary) !important; 
+  border-radius: 15px;
+  color: white !important;
+}
+.react-calendar__tile--now {
+  background: #ecfeff !important; 
+  color: var(--brand-primary) !important;
+  border-radius: 15px;
+  font-weight: bold;
+}
+.react-calendar__navigation button {
+  font-weight: bold !important;
+  color: var(--theme-text-main) !important;
+}

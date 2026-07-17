@@ -1,0 +1,523 @@
+import React, { useState, useEffect } from "react";
+import { authAPI } from "../services/api.js";
+import {
+  Lock,
+  User,
+  RefreshCw,
+  AlertCircle,
+  Ban,
+  ArrowLeft,
+  Mail,
+  ShieldAlert,
+} from "lucide-react";
+
+const Login = () => {
+  const [captchaData, setCaptchaData] = useState({
+    image_url: "",
+    hashkey: "",
+  });
+  const [formData, setFormData] = useState({
+    username: "",
+    password: "",
+    captcha: "",
+  });
+  const [pin, setPin] = useState("");
+  const [step, setStep] = useState(1); // Step 1: Login, Step 2: PIN, Step 3: Forgot Password Panel
+  const [userId, setUserId] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
+  const [accessRevoked, setAccessRevoked] = useState(false);
+
+  // Recovery Form State Parameters
+  const [recoveryData, setRecoveryData] = useState({
+    username: "",
+    email: "",
+    newPin: "",
+  });
+
+  const fetchCaptcha = async () => {
+    setError("");
+    try {
+      const res = await authAPI.getCaptcha();
+      setCaptchaData(res.data);
+    } catch (err) {
+      setError("Security server offline.");
+    }
+  };
+
+  useEffect(() => {
+    fetchCaptcha();
+  }, []);
+
+  const getCaptchaUrl = () => {
+    if (!captchaData.image_url) return "";
+    return captchaData.image_url.startsWith("http")
+      ? captchaData.image_url
+      : `${captchaData.image_url}`;
+  };
+
+  // Hardware Canvas Fingerprinting Generator
+  const generateCanvasHash = () => {
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = 200;
+      canvas.height = 40;
+
+      const ctx = canvas.getContext("2d");
+      ctx.textBaseline = "top";
+      ctx.font = "14px 'Arial'";
+      ctx.fillStyle = "#f60";
+      ctx.fillRect(125, 1, 62, 20);
+      ctx.fillStyle = "#069";
+      ctx.fillText("Paragrine_Identity_Gate_2026", 2, 15);
+      ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
+      ctx.fillText("Paragrine_Identity_Gate_2026", 4, 17);
+      return canvas.toDataURL().slice(-60);
+    } catch (e) {
+      return "unsupported";
+    }
+  };
+
+  // Compile full workstation environmental properties
+  const captureDeviceMetadata = () => {
+    const ua = navigator.userAgent;
+    let browser = "Other-Browser";
+
+    if (ua.includes("Edg")) browser = "Edge";
+    else if (ua.includes("Chrome")) browser = "Chrome";
+    else if (ua.includes("Firefox")) browser = "Firefox";
+    else if (ua.includes("Safari") && !ua.includes("Chrome"))
+      browser = "Safari";
+
+    let os = "Other-OS";
+    if (ua.includes("Windows")) os = "Windows";
+    else if (ua.includes("Macintosh")) os = "MacOS";
+    else if (ua.includes("Linux")) os = "Linux";
+
+    const canvasHash = generateCanvasHash();
+    const resolution = `${window.screen.width}x${window.screen.height}`;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    const generatedVisitorId = btoa(
+      `${os}-${browser}-${resolution}-${timezone}-${canvasHash.slice(0, 10)}`,
+    ).slice(0, 32);
+
+    return {
+      visitor_id: generatedVisitorId,
+      os: os,
+      browser: browser,
+      screen_resolution: resolution,
+      timezone: timezone,
+      canvas_hash: canvasHash,
+    };
+  };
+
+  const handleLoginSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+
+    const currentDeviceMetadata = captureDeviceMetadata();
+
+    try {
+      const res = await authAPI.loginStepOne({
+        username: formData.username,
+        password: formData.password,
+        captcha_key: captchaData.hashkey,
+        captcha_value: formData.captcha,
+        device_metadata: currentDeviceMetadata,
+      });
+      if (res.data.require_pin) {
+        setUserId(res.data.user_id);
+        setStep(2);
+      }
+    } catch (err) {
+      if (err.response?.status === 403) {
+        setAccessRevoked(true);
+        setError(
+          err.response.data.detail || "Access Revoked by Administrator.",
+        );
+      } else {
+        setError(err.response?.data?.error || "Authentication failed.");
+        fetchCaptcha();
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyPin = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const res = await authAPI.verifyPin(userId, pin);
+      sessionStorage.setItem("access_token", res.data.access);
+      sessionStorage.setItem("user_id", res.data.user_id || userId);
+      sessionStorage.setItem(
+        "user_role",
+        res.data.user.is_staff ? "admin" : "user",
+      );
+
+      window.location.href = res.data.user.is_staff
+        ? "/pap/admin/controllers"
+        : "/pap/user/dashboard";
+    } catch (err) {
+      if (err.response?.status === 403) {
+        setAccessRevoked(true);
+        setError("Your access was revoked during the verification process.");
+      } else {
+        setError("Invalid security PIN.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Trigger Identity Password/PIN Recovery API Call
+  const handleRecoverySubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    setSuccessMessage("");
+
+    try {
+      // Direct call parameters linked to the newly structured endpoint view
+      await authAPI.forgotPassword({
+        username: recoveryData.username,
+        email: recoveryData.email,
+        new_pin: recoveryData.newPin,
+      });
+
+      setSuccessMessage(
+        "Identity verified. Secondary PIN updated successfully!",
+      );
+      setRecoveryData({ username: "", email: "", newPin: "" });
+      // Redirect back to primary security context gate input form
+      setTimeout(() => {
+        setStep(1);
+        setSuccessMessage("");
+        fetchCaptcha();
+      }, 2500);
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+          err.response?.data?.error ||
+          "Recovery process failed.",
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetLogin = () => {
+    setAccessRevoked(false);
+    setStep(1);
+    setError("");
+    setSuccessMessage("");
+    setFormData({ ...formData, captcha: "" });
+    fetchCaptcha();
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4 font-sans">
+      <div className="bg-white px-6 py-6 rounded-[2.5rem] shadow-2xl w-full max-w-sm border border-slate-100 flex flex-col animate-in fade-in zoom-in duration-300">
+        
+        {/* Branding Header */}
+        <div className="text-center mb-4 flex flex-col items-center">
+          {accessRevoked ? (
+            <div className="inline-flex items-center justify-center w-12 h-12 rounded-2xl mb-3 shadow-inner bg-red-50 text-red-500">
+              <Ban size={24} />
+            </div>
+          ) : (
+            <div className="flex flex-col items-center mb-1">
+              <img
+                src="/paregrinLogo.png"
+                alt="Paregrin Logo Asset"
+                className="h-12 w-auto object-contain select-none"
+              />
+              <h2 className="text-xl font-black text-slate-800 tracking-wider mt-1 font-sans">
+                PAREGRINE
+              </h2>
+            </div>
+          )}
+        </div>
+
+        {/* Dynamic Content Card */}
+        {accessRevoked ? (
+          <div className="text-center space-y-4 animate-in slide-in-from-bottom-4 duration-500">
+            <div className="p-3 bg-red-50 rounded-2xl border border-red-100">
+              <h3 className="text-sm font-black text-red-800 uppercase tracking-tight mb-1">
+                Access Denied
+              </h3>
+              <p className="text-[11px] text-red-600 font-medium leading-relaxed">
+                {error}
+              </p>
+            </div>
+            <button
+              onClick={resetLogin}
+              className="flex items-center justify-center gap-2 w-full text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-brand-primary transition-colors"
+            >
+              <ArrowLeft size={14} /> Back to Identity Entry
+            </button>
+          </div>
+        ) : (
+          <>
+            {error && (
+              <div className="mb-3 p-3 bg-red-50 border-l-4 border-red-500 text-red-700 flex items-center gap-3 text-xs font-bold rounded-r-xl animate-shake">
+                <AlertCircle size={16} />
+                <span>{error}</span>
+              </div>
+            )}
+
+            {successMessage && (
+              <div className="mb-3 p-3 bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 flex items-center gap-3 text-xs font-bold rounded-r-xl">
+                <AlertCircle size={16} className="text-emerald-500" />
+                <span>{successMessage}</span>
+              </div>
+            )}
+
+            {step === 1 && (
+              <form onSubmit={handleLoginSubmit} className="space-y-3">
+                <div className="relative">
+                  <User
+                    className="absolute left-4 top-3 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    required
+                    className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-brand-primary outline-none transition-all"
+                    onChange={(e) =>
+                      setFormData({ ...formData, username: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="relative">
+                  <Lock
+                    className="absolute left-4 top-3 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    required
+                    className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-brand-primary outline-none transition-all"
+                    onChange={(e) =>
+                      setFormData({ ...formData, password: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-[1.5rem] border border-slate-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+                      Identity Verification
+                    </span>
+                    <button
+                      type="button"
+                      onClick={fetchCaptcha}
+                      className="text-brand-primary hover:rotate-180 transition-transform duration-500"
+                    >
+                      <RefreshCw size={12} />
+                    </button>
+                  </div>
+                  <div className="flex justify-center bg-white p-2 rounded-xl border border-slate-100 mb-2 h-12 shadow-sm">
+                    {captchaData.image_url ? (
+                      <img
+                        src={getCaptchaUrl()}
+                        alt="captcha"
+                        className="h-full object-contain"
+                      />
+                    ) : (
+                      <div className="h-full flex items-center text-[10px] text-slate-300 italic">
+                        Initializing security...
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Captcha Code"
+                    required
+                    autoComplete="off"
+                    className="w-full px-4 py-2 border border-slate-200 rounded-xl text-center text-xs font-black tracking-[0.3em] uppercase focus:ring-2 focus:ring-brand-primary outline-none"
+                    onChange={(e) =>
+                      setFormData({ ...formData, captcha: e.target.value })
+                    }
+                  />
+                </div>
+
+                <div className="text-right px-1 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setError("");
+                      setStep(3);
+                    }}
+                    className="text-[10px] font-bold text-slate-400 hover:text-brand-primary transition-colors"
+                  >
+                    Forgot Security PIN Clearance?
+                  </button>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-brand-primary text-white py-3 rounded-2xl font-black text-sm uppercase tracking-widest hover:opacity-90 transition-all shadow-xl shadow-slate-300 active:scale-[0.98] disabled:opacity-50"
+                >
+                  {loading ? "Authenticating..." : "Login"}
+                </button>
+              </form>
+            )}
+
+            {step === 2 && (
+              <form
+                onSubmit={handleVerifyPin}
+                className="space-y-4 text-center animate-in slide-in-from-right-4 duration-300"
+              >
+                <div>
+                  <p className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                    Secondary Clearance
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                    Enter your unique 6-digit access PIN
+                  </p>
+                </div>
+                <input
+                  type="password"
+                  maxLength="6"
+                  placeholder="••••••"
+                  autoFocus
+                  required
+                  className="w-full text-center text-3xl tracking-[0.5em] py-3 border-b-4 border-cyan-600 outline-none bg-transparent font-mono text-slate-800 placeholder:text-slate-100 focus:border-brand-primary"
+                  onChange={(e) => setPin(e.target.value)}
+                />
+                <button
+                  type="submit"
+                  disabled={loading || pin.length < 4}
+                  className="w-full bg-brand-primary text-white py-3 rounded-2xl font-black text-sm uppercase tracking-widest hover:opacity-90 transition-all shadow-xl shadow-slate-300 disabled:opacity-50 active:scale-[0.98]"
+                >
+                  {loading ? "Verifying..." : "Unlock Portal"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="text-[10px] text-brand-primary font-black uppercase tracking-widest transition-colors hover:opacity-80 pt-2"
+                >
+                  Cancel Authorization
+                </button>
+              </form>
+            )}
+
+            {step === 3 && (
+              <form
+                onSubmit={handleRecoverySubmit}
+                className="space-y-3 animate-in slide-in-from-left-4 duration-300"
+              >
+                <div className="text-center mb-1">
+                  <p className="text-sm font-black text-slate-800 uppercase tracking-tight">
+                    Identity Recovery
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                    Verify account data vectors to cycle clearance fields
+                  </p>
+                </div>
+
+                <div className="relative">
+                  <User
+                    className="absolute left-4 top-3 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Account Username"
+                    required
+                    value={recoveryData.username}
+                    className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-brand-primary outline-none transition-all"
+                    onChange={(e) =>
+                      setRecoveryData({
+                        ...recoveryData,
+                        username: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="relative">
+                  <Mail
+                    className="absolute left-4 top-3 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    type="email"
+                    placeholder="Registered Profile Email"
+                    required
+                    value={recoveryData.email}
+                    className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-brand-primary outline-none transition-all"
+                    onChange={(e) =>
+                      setRecoveryData({
+                        ...recoveryData,
+                        email: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+
+                <div className="relative">
+                  <ShieldAlert
+                    className="absolute left-4 top-3 text-slate-400"
+                    size={16}
+                  />
+                  <input
+                    type="password"
+                    maxLength="6"
+                    placeholder="Configure New 6-Digit PIN"
+                    required
+                    value={recoveryData.newPin}
+                    className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-medium focus:ring-2 focus:ring-brand-primary outline-none transition-all font-mono placeholder:font-sans"
+                    onChange={(e) =>
+                      setRecoveryData({
+                        ...recoveryData,
+                        newPin: e.target.value,
+                      })
+                    }
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={loading || recoveryData.newPin.length !== 6}
+                  className="w-full bg-slate-900 text-white py-3 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-brand-primary transition-all shadow-xl active:scale-[0.98] disabled:opacity-50"
+                >
+                  {loading ? "Processing Reset..." : "Reset Clearance PIN"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError("");
+                    setStep(1);
+                  }}
+                  className="w-full flex items-center justify-center gap-2 text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-brand-primary transition-colors pt-2"
+                >
+                  <ArrowLeft size={14} /> Back to Identity Entry
+                </button>
+              </form>
+            )}
+          </>
+        )}
+
+        {/* Updated Footer with Clickable Link */}
+        <div className="mt-4 text-center border-t border-slate-50 pt-4">
+          <p className="text-[9px] text-slate-300 font-bold uppercase tracking-[0.15em]">
+            &copy; 2026 <a href="https://pragicts.com/" target="_blank" rel="noopener noreferrer" className="hover:text-brand-primary transition-colors">PragICTS Automation System</a>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Login;

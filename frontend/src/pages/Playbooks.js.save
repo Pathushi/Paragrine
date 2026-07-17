@@ -1,0 +1,588 @@
+import React, { useState, useEffect } from "react";
+import { adminAPI } from "../services/api.js";
+import {
+  FileCode,
+  Plus,
+  X,
+  UserPlus,
+  Upload,
+  CheckCircle2,
+  AlertCircle,
+  Trash2,
+  Edit3,
+  Users,
+  Check,
+  Folder,
+  ArrowLeft,
+} from "lucide-react";
+
+const Playbooks = () => {
+  // Navigation & Hierarchy Workspace Tracking
+  const [selectedFolder, setSelectedFolder] = useState(null); // Holds the selected Controller Object
+  
+  const [playbooks, setPlaybooks] = useState([]);
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isEditMode, setIsEditMode] = useState(false);
+  const [selectedPlaybook, setSelectedPlaybook] = useState(null);
+  const [inputMode, setInputMode] = useState("upload");
+  const [activeCategory, setActiveCategory] = useState("all");
+
+  const [users, setUsers] = useState([]);
+  const [controllers, setControllers] = useState([]);
+  const [groups, setGroups] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const [notification, setNotification] = useState({
+    show: false,
+    message: "",
+    type: "success",
+  });
+
+  const [newPlaybook, setNewPlaybook] = useState({
+    name: "",
+    description: "",
+    category: "system",
+    controller_id: "",
+    call_reference: "",
+    definition: "", // Changed from script_content
+    input_parameters: "",
+    file: null,
+  });
+
+  const [assignment, setAssignment] = useState({
+    group_id: "",
+    selected_users: [],
+  });
+
+  const categories = [
+    { id: "all", label: "All Playbooks" },
+    { id: "system", label: "System & Health" },
+    { id: "database", label: "Database" },
+    { id: "security", label: "Security" },
+    { id: "deployment", label: "Deployment" },
+  ];
+
+  useEffect(() => {
+    if (notification.show) {
+      const timer = setTimeout(
+        () => setNotification({ ...notification, show: false }),
+        3000,
+      );
+      return () => clearTimeout(timer);
+    }
+  }, [notification]);
+
+  // Initial Fetch: Load available folders (Controllers)
+  const fetchFolders = async () => {
+    try {
+      const [uRes, cRes, gRes] = await Promise.all([
+        adminAPI.getUsers(),
+        adminAPI.getControllers(),
+        adminAPI.getGroups(),
+      ]);
+      setUsers(uRes.data || []);
+      setControllers(cRes.data || []);
+      setGroups(gRes.data || []);
+    } catch (err) {
+      console.error("Fetch folder array profiles failed", err);
+    }
+  };
+
+  useEffect(() => {
+    fetchFolders();
+  }, []);
+
+  // 🎯 CORE TRIGGER: Action when a user selects an Ansible Folder
+  const handleSelectFolder = async (controllerNode) => {
+  console.log("DEBUG: Controller clicked:", controllerNode.name, "with ID:", controllerNode.id);
+  setLoading(true);
+  setSelectedFolder(controllerNode);
+  try {
+    const res = await adminAPI.getPlaybooksByController(controllerNode.id);
+    console.log("DEBUG: Playbooks fetched for ID:", controllerNode.id, "Data:", res.data);
+    setPlaybooks(res.data || []);
+  } catch (err) {
+    console.error("Failed:", err);
+  } finally {
+    setLoading(false);
+  }
+};
+
+  const resetForm = () => {
+    setNewPlaybook({
+      name: "",
+      description: "",
+      category: "system",
+      controller_id: selectedFolder ? selectedFolder.id.toString() : "",
+      call_reference: "",
+      script_content: "",
+      input_parameters: "",
+      file: null,
+    });
+    setIsEditMode(false);
+    setSelectedPlaybook(null);
+  };
+
+  const handleEditClick = async (pb) => {
+    setLoading(true);
+    setSelectedPlaybook(pb);
+
+    try {
+      let freshPlaybookData = pb;
+      if (adminAPI.getPlaybookDetails) {
+        const res = await adminAPI.getPlaybookDetails(pb.id);
+        freshPlaybookData = res.data;
+      }
+
+      const formattedParams = freshPlaybookData.input_parameters
+        ? JSON.stringify(freshPlaybookData.input_parameters, null, 2)
+        : "";
+
+
+      setIsEditMode(true);
+      setIsCreateModalOpen(true);
+
+    } catch (err) {
+      console.error("Failed to fetch playbook content", err);
+      alert("Operational error retrieving playbook content from storage.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this playbook? This will also remove the physical file.")) return;
+    try {
+      await adminAPI.deletePlaybook(id);
+      setNotification({ show: true, message: "Playbook deleted successfully!", type: "success" });
+      // Refresh local directory context dynamically
+      handleSelectFolder(selectedFolder);
+    } catch (err) {
+      setNotification({ show: true, message: "Failed to delete playbook.", type: "error" });
+    }
+  };
+
+  const handleCreateSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+
+    let parsedParams = {};
+    if (newPlaybook.input_parameters && newPlaybook.input_parameters.trim() !== "") {
+      try {
+        parsedParams = JSON.parse(newPlaybook.input_parameters);
+      } catch (err) {
+        alert("Syntax Error: Your parameters field contains invalid formatting configuration JSON.");
+        setLoading(false);
+        return;
+      }
+    }
+
+    const formData = new FormData();
+    formData.append("name", newPlaybook.name);
+    formData.append("description", newPlaybook.description || "Updated via Paragrine");
+    formData.append("category", newPlaybook.category);
+    formData.append("controller", newPlaybook.controller_id);
+    formData.append("call_reference", newPlaybook.call_reference);
+    formData.append("input_parameters", JSON.stringify(parsedParams));
+
+    if (inputMode === "upload" && newPlaybook.file) {
+      formData.append("file", newPlaybook.file);
+    } else if (inputMode === "editor") {
+      formData.append("script_content", newPlaybook.script_content);
+    }
+
+    try {
+      if (isEditMode) {
+        await adminAPI.updatePlaybook(selectedPlaybook.id, formData);
+        setNotification({ show: true, message: "Playbook updated successfully!", type: "success" });
+      } else {
+        await adminAPI.createPlaybook(formData);
+        setNotification({ show: true, message: "Playbook registered successfully!", type: "success" });
+      }
+      setIsCreateModalOpen(false);
+      resetForm();
+      handleSelectFolder(selectedFolder);
+    } catch (err) {
+      setNotification({ show: true, message: "Error processing playbook.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGroupDropdownChange = (groupId) => {
+    if (!groupId) {
+      setAssignment({ group_id: "", selected_users: [] });
+      return;
+    }
+    const selectedGroupObj = groups.find((g) => g.id.toString() === groupId.toString());
+    const initialGroupUserIds = selectedGroupObj?.users || [];
+    setAssignment({ group_id: groupId, selected_users: initialGroupUserIds });
+  };
+
+  const handleUserToggleCheckbox = (userId) => {
+    const activeList = [...assignment.selected_users];
+    const index = activeList.indexOf(userId);
+    if (index > -1) {
+      activeList.splice(index, 1);
+    } else {
+      activeList.push(userId);
+    }
+    setAssignment({ ...assignment, selected_users: activeList });
+  };
+
+  const handleGroupAssignSubmit = async (e) => {
+    e.preventDefault();
+    if (!assignment.group_id) {
+      alert("Please designate a target authorization access group.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const currentGroupObj = groups.find((g) => g.id.toString() === assignment.group_id.toString());
+      const combinedPlaybooks = Array.from(new Set([...(currentGroupObj?.playbooks || []), selectedPlaybook.id]));
+
+      await adminAPI.updateGroup(assignment.group_id, {
+        name: currentGroupObj.name,
+        playbooks: combinedPlaybooks,
+        users: currentGroupObj.users,
+      });
+
+      await Promise.all(
+        assignment.selected_users.map((userId) =>
+          adminAPI.assignTask({ playbook: selectedPlaybook.id, user: userId })
+        )
+      );
+
+      setNotification({ show: true, message: `Successfully synchronized access boundaries for selected group members!`, type: "success" });
+      setIsAssignModalOpen(false);
+      setAssignment({ group_id: "", selected_users: [] });
+      handleSelectFolder(selectedFolder);
+    } catch (err) {
+      console.error(err);
+      setNotification({ show: true, message: "Failed to map playbook infrastructure permissions metrics.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const filteredPlaybooks = playbooks.filter((pb) => activeCategory === "all" || pb.category === activeCategory);
+
+  const usersInActiveGroup = users.filter((u) => {
+    const groupContext = groups.find((g) => g.id.toString() === assignment.group_id.toString());
+    return groupContext?.users?.includes(u.id);
+  });
+
+  // ============================================================================
+  // STAGE 1 RENDER: Render the high-fidelity Folder Directory Selection view
+  // ============================================================================
+  if (!selectedFolder) {
+    return (
+      <div className="p-8 animate-in fade-in duration-500 font-sans">
+        <div className="mb-8">
+          <h1 className="text-2xl font-bold text-slate-800 tracking-tight">Playbook Workspaces</h1>
+          <p className="text-slate-500 text-sm">Select an Ansible controller workspace environment directory below</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {controllers.map((c) => (
+            <div
+              key={c.id}
+              onClick={() => handleSelectFolder(c)}
+              className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-lg hover:border-brand-primary transition-all cursor-pointer group flex items-center gap-4 animate-in zoom-in-95 duration-200"
+            >
+              <div className="p-4 bg-cyan-50 rounded-2xl text-brand-primary group-hover:bg-brand-primary group-hover:text-white transition-all">
+                <Folder size={28} />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-800 text-base group-hover:text-brand-primary transition-colors">
+                  ansible/{c.name.trim().replace(/ /g, "_").toLowerCase()}/
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mt-0.5">Target Device IP: {c.ip_address}</p>
+              </div>
+            </div>
+          ))}
+          {controllers.length === 0 && (
+            <div className="col-span-full py-16 text-center text-slate-400 italic bg-white border rounded-3xl">
+              No target folders or active workspace controllers discovered. Register a controller first.
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ============================================================================
+  // STAGE 2 RENDER: Display playbooks belonging to the selected folder
+  // ============================================================================
+  return (
+    <div className="p-8 animate-in fade-in duration-500 font-sans">
+      {notification.show && (
+        <div className={`fixed top-10 left-1/2 -translate-x-1/2 z-[100] flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl animate-in slide-in-from-top duration-300 ${notification.type === "success" ? "bg-emerald-600 text-white" : "bg-red-600 text-white"}`}>
+          {notification.type === "success" ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
+          <span className="font-bold text-sm">{notification.message}</span>
+        </div>
+      )}
+
+      {/* Workspace Header Dashboard Section */}
+      <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-6">
+        <div className="flex items-center gap-4">
+          <button 
+            onClick={() => setSelectedFolder(null)}
+            className="p-2.5 hover:bg-slate-100 rounded-xl border border-slate-200 transition-colors text-slate-500"
+            title="Back to Workspace Folders"
+          >
+            <ArrowLeft size={16} />
+          </button>
+          <div>
+            <h1 className="text-2xl font-bold text-slate-800 tracking-tight flex items-center gap-2">
+              Workspace: <span className="text-brand-primary font-mono font-medium">ansible/{selectedFolder.name.trim().replace(/ /g, "_").toLowerCase()}/</span>
+            </h1>
+            <p className="text-slate-400 text-xs font-medium">Routing execution parameters dynamically via node IP {selectedFolder.ip_address}</p>
+          </div>
+        </div>
+        <button
+          onClick={() => { resetForm(); setIsCreateModalOpen(true); }}
+          className="flex items-center gap-2 bg-brand-primary text-white px-5 py-2.5 rounded-xl font-bold hover:opacity-90 transition active:scale-95 shadow-lg shadow-cyan-100 self-start sm:self-auto"
+        >
+          <Plus size={18} /> Create Playbook
+        </button>
+      </div>
+
+      <div className="flex border-b border-slate-200 gap-2 mb-8 overflow-x-auto pb-px">
+        {categories.map((cat) => (
+          <button
+            key={cat.id}
+            onClick={() => setActiveCategory(cat.id)}
+            className={`px-4 py-2.5 font-bold text-xs uppercase tracking-wider transition-all rounded-t-xl whitespace-nowrap border-b-2 ${activeCategory === cat.id ? "border-brand-primary text-brand-primary bg-cyan-50/40" : "border-transparent text-slate-400 hover:text-slate-600"}`}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Grid Library Workspace Profile Panels Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        {filteredPlaybooks.length > 0 ? (
+          filteredPlaybooks.map((pb) => (
+            <div key={pb.id} className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm hover:shadow-md hover:border-cyan-500/50 transition-all relative group flex flex-col h-full animate-in fade-in zoom-in duration-200">
+              <div className="flex-1">
+                <div className="flex items-center justify-between h-7 mb-4">
+                  <div>
+                    {pb.assigned_to ? (
+                      <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase border border-emerald-100 w-fit">
+                        <CheckCircle2 size={12} /> Assigned
+                      </div>
+                    ) : (
+                      <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest px-1 py-1">Unassigned</div>
+                    )}
+                  </div>
+                  <div className="flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <button onClick={() => handleEditClick(pb)} className="p-1.5 bg-slate-50 text-slate-500 rounded-lg hover:bg-brand-primary hover:text-white transition shadow-sm border border-slate-100">
+                      <Edit3 size={12} />
+                    </button>
+                    <button onClick={() => handleDelete(pb.id)} className="p-1.5 bg-slate-50 text-red-500 rounded-lg hover:bg-red-600 hover:text-white transition shadow-sm border border-slate-100">
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+                <div className="p-3 bg-cyan-50 w-fit rounded-2xl mb-4 text-brand-primary">
+                  <FileCode size={24} />
+                </div>
+                <h3 className="font-bold text-slate-800 text-lg leading-tight">{pb.name}</h3>
+                <p className="text-slate-400 text-[10px] mt-1 uppercase font-black tracking-widest">Ref: {pb.call_reference}</p>
+              </div>
+              <div className="mt-6">
+                <button
+                  onClick={() => { setSelectedPlaybook(pb); setAssignment({ group_id: "", selected_users: [] }); setIsAssignModalOpen(true); }}
+                  className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl font-bold bg-slate-900 text-white hover:bg-brand-primary text-xs transition-all active:scale-95"
+                >
+                  <UserPlus size={14} /> Assign Permissions
+                </button>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="col-span-full py-16 text-center text-slate-400 italic bg-white border rounded-3xl">
+            No playbook files registered inside this folder workspace view yet.
+          </div>
+        )}
+      </div>
+
+      {/* CREATE/EDIT MODAL */}
+      {isCreateModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in">
+          <div className="bg-white rounded-[2.5rem] shadow-2xl w-full max-w-xl p-8 max-h-[90vh] overflow-hidden flex flex-col">
+            <div className="flex justify-between items-center mb-6 flex-shrink-0">
+              <h2 className="text-xl font-bold text-slate-800">{isEditMode ? "Update Playbook" : "New Playbook"}</h2>
+              <button onClick={() => setIsCreateModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={24} />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateSubmit} className="space-y-4 flex-1 overflow-y-auto pr-1 custom-scrollbar">
+              <div className="grid grid-cols-2 gap-4">
+                <input
+                  type="text"
+                  required
+                  placeholder="Name"
+                  className="w-full px-5 py-3.5 bg-slate-50 border rounded-2xl outline-none focus:ring-2 focus:ring-brand-primary"
+                  value={newPlaybook.name}
+                  onChange={(e) => setNewPlaybook({ ...newPlaybook, name: e.target.value })}
+                />
+                <select
+                  required
+                  disabled={true} // Hard-bound to active selected workspace context path to ensure structural security integrity
+                  className="w-full px-5 py-3.5 bg-slate-100 border border-slate-200 rounded-2xl outline-none font-bold text-slate-500 opacity-70"
+                  value={newPlaybook.controller_id}
+                >
+                  <option value={selectedFolder.id}>{selectedFolder.name}</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1 tracking-widest">Library Category Group</label>
+                <select
+                  required
+                  className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl outline-none font-bold text-slate-700 focus:ring-2 focus:ring-brand-primary"
+                  value={newPlaybook.category}
+                  onChange={(e) => setNewPlaybook({ ...newPlaybook, category: e.target.value })}
+                >
+                  <option value="system">System & Health Checks</option>
+                  <option value="database">Database Management Operations</option>
+                  <option value="security">Security Infrastructure Hardening</option>
+                  <option value="deployment">Application Lifecycle Deployment</option>
+                </select>
+              </div>
+
+              <input
+                type="text"
+                required
+                placeholder="Filename (e.g. check.yml)"
+                className="w-full px-5 py-3.5 bg-slate-50 border rounded-2xl font-mono text-sm outline-none focus:ring-2 focus:ring-brand-primary"
+                value={newPlaybook.call_reference}
+                onChange={(e) => setNewPlaybook({ ...newPlaybook, call_reference: e.target.value })}
+              />
+
+              <div className="flex flex-col gap-1">
+                <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest px-0.5">
+                  Parameters Configuration Schema (JSON)
+                </label>
+                <textarea
+                  rows="4"
+                  placeholder={`{\n  "fields": [\n    { "name": "variable_name", "label": "Label Description", "type": "text", "required": true }\n  ]\n}`}
+                  className="w-full p-4 bg-slate-900 text-emerald-400 font-mono text-xs rounded-2xl border outline-none focus:ring-1 focus:ring-brand-primary"
+                  value={newPlaybook.input_parameters}
+                  onChange={(e) => setNewPlaybook({ ...newPlaybook, input_parameters: e.target.value })}
+                />
+              </div>
+
+              <div className="flex bg-slate-100 p-1 rounded-2xl">
+                <button type="button" onClick={() => setInputMode("upload")} className={`flex-1 py-2.5 text-xs font-bold rounded-xl ${inputMode === "upload" ? "bg-white shadow text-cyan-700" : "text-slate-500"}`}>
+                  Upload
+                </button>
+                <button type="button" onClick={() => setInputMode("editor")} className={`flex-1 py-2.5 text-xs font-bold rounded-xl ${inputMode === "editor" ? "bg-white shadow text-cyan-700" : "text-slate-500"}`}>
+                  Editor
+                </button>
+              </div>
+
+              {inputMode === "upload" ? (
+                <div className="border-2 border-dashed border-slate-200 rounded-3xl p-10 text-center bg-slate-50/30">
+                  <input type="file" id="pb-up" className="hidden" onChange={(e) => setNewPlaybook({ ...newPlaybook, file: e.target.files[0] })} />
+                  <label htmlFor="pb-up" className="cursor-pointer">
+                    <Upload className="mx-auto text-slate-300 mb-2" size={32} />
+                    <p className="text-xs font-bold text-slate-600">{newPlaybook.file ? newPlaybook.file.name : "Click to browse file"}</p>
+                  </label>
+                </div>
+              ) : (
+                <textarea
+                  className="w-full h-40 p-5 bg-slate-900 text-emerald-400 font-mono text-xs rounded-3xl outline-none focus:ring-2 focus:ring-brand-primary"
+                  placeholder="---"
+                  value={newPlaybook.script_content}
+                  onChange={(e) => setNewPlaybook({ ...newPlaybook, script_content: e.target.value })}
+                />
+              )}
+
+              <button type="submit" disabled={loading} className="w-full bg-brand-primary text-white py-4 rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl active:scale-95 disabled:opacity-50 flex-shrink-0">
+                {loading ? "Processing..." : isEditMode ? "Update Playbook" : "Register Playbook"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ASSIGNMENT PERMISSIONS BOUNDARY SELECTION MODAL */}
+      {isAssignModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-[2.5rem] p-8 w-full max-w-md shadow-2xl flex flex-col max-h-[85vh] overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex items-center gap-3 pb-4 border-b mb-6">
+              <div className="p-2 bg-slate-900 text-white rounded-xl"><Users size={18} /></div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-800 leading-tight">Assign {selectedPlaybook?.name}</h2>
+                <p className="text-slate-400 text-xs mt-0.5">Map access permissions by group hierarchies</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleGroupAssignSubmit} className="flex-1 flex flex-col overflow-hidden space-y-4">
+              <div>
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Target Authorization Access Group</label>
+                <select
+                  required
+                  className="w-full px-5 py-4 bg-slate-50 border rounded-2xl font-bold focus:ring-2 focus:ring-brand-primary text-sm outline-none cursor-pointer"
+                  value={assignment.group_id}
+                  onChange={(e) => handleGroupDropdownChange(e.target.value)}
+                >
+                  <option value="">Select Target Group...</option>
+                  {groups.map((g) => <option key={g.id} value={g.id}>{g.name} ({g.users?.length || 0} members)</option>)}
+                </select>
+              </div>
+
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <label className="block text-[10px] font-black text-slate-400 uppercase mb-2 tracking-widest">Ticked Operators Granted Clearance ({assignment.selected_users.length})</label>
+                <div className="flex-1 border border-slate-200 rounded-2xl overflow-y-auto bg-slate-50/50 divide-y divide-slate-100 max-h-56">
+                  {assignment.group_id ? (
+                    usersInActiveGroup.length > 0 ? (
+                      usersInActiveGroup.map((user) => {
+                        const isTicked = assignment.selected_users.includes(user.id);
+                        return (
+                          <div key={user.id} onClick={() => handleUserToggleCheckbox(user.id)} className={`flex items-center justify-between p-3 cursor-pointer select-none transition-colors ${isTicked ? "bg-cyan-50/40" : "hover:bg-slate-50"}`}>
+                            <div className="flex items-center gap-2.5">
+                              <div className={`w-7 h-7 rounded-xl flex items-center justify-center text-[11px] font-black ${isTicked ? "bg-brand-primary text-white" : "bg-white border text-slate-500 shadow-sm"}`}>
+                                {user.username[0].toUpperCase()}
+                              </div>
+                              <div>
+                                <p className="text-xs font-bold text-slate-800">{user.first_name} {user.last_name}</p>
+                                <p className="text-[9px] text-slate-400 font-medium">@{user.username} • {user.designation || "Operator"}</p>
+                              </div>
+                            </div>
+                            <div className={`w-4 h-4 rounded-md border flex items-center justify-center transition-all ${isTicked ? "bg-brand-primary border-brand-primary text-white" : "border-slate-300 bg-white"}`}>
+                              {isTicked && <Check size={10} strokeWidth={4} />}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-xs text-slate-400 italic text-center py-8">The chosen access group contains no registered members.</p>
+                    )
+                  ) : (
+                    <p className="text-xs text-slate-400 italic text-center py-8">Designate an access group first to configure operator parameters.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t flex gap-3 bg-white mt-auto">
+                <button type="button" onClick={() => setIsAssignModalOpen(false)} className="flex-1 py-3.5 border rounded-2xl text-slate-400 font-bold text-xs hover:bg-slate-50">Cancel</button>
+                <button type="submit" disabled={loading || !assignment.group_id} className="flex-1 bg-brand-primary text-white py-3.5 rounded-2xl font-bold text-xs hover:opacity-90 transition active:scale-95 disabled:opacity-50">
+                  {loading ? "Syncing..." : "Commit Access"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Playbooks;
